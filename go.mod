@@ -1,8 +1,12 @@
-module go-car-bot
+module gocarbot
 
 go 1.24.0
 
-require google.golang.org/api v0.221.0
+require (
+	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
+	github.com/joho/godotenv v1.5.1
+	google.golang.org/api v0.221.0
+)
 
 require (
 	cloud.google.com/go/auth v0.14.1 // indirect
@@ -11,7 +15,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
