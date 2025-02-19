@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gocarbot/internal"
+	"gocarbot/models"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -54,11 +55,13 @@ func (h *BotHandler) HandleMessage(message *tgbotapi.Message) {
 }
 
 func (h *BotHandler) HandleCallbackQuery(callback *tgbotapi.CallbackQuery) {
-	switch callback.Data {
-	case "get_info":
-		h.HandleGetInfo(callback)
-	case "get_main":
+	switch {
+	case callback.Data == "get_main":
 		h.HandleGetMain(callback)
+	case callback.Data == "get_orders":
+		h.HandleGetOrders(callback)
+	case strings.HasPrefix(callback.Data, "order_"):
+		h.HandleOrderInfo(callback)
 	}
 }
 
@@ -70,7 +73,7 @@ func (h *BotHandler) HandleStart(message *tgbotapi.Message) {
 	if err != nil {
 		if strings.Contains(err.Error(), "пользователь с ID") {
 			// Если пользователь не найден, запрашиваем номер телефона
-			text := "Добро пожаловать! Пожалуйста, введите ваш номер телефона в формате 79999999999"
+			text := "👋🏻 Здравствуйте! Пожалуйста, введите ваш номер телефона в формате 79999999999"
 			msg := tgbotapi.NewMessage(message.Chat.ID, text)
 			if _, err := h.Bot.Send(msg); err != nil {
 				log.Printf("Ошибка отправки сообщения: %v", err)
@@ -85,11 +88,14 @@ func (h *BotHandler) HandleStart(message *tgbotapi.Message) {
 		}
 	}
 
-	text := "Главное меню\n\nДобро пожаловать! Здесь вы можете отслеживать статус ваших заказов"
-	buttonInfo := tgbotapi.NewInlineKeyboardButtonData("Показать информацию", "get_info")
+	text := "🏠 Главное меню\n\nЗдесь вы можете получить информацию о статусе выполнения ваших заказов, а также связаться с нами"
+
+	buttonOrders := tgbotapi.NewInlineKeyboardButtonData("📦 Мои заказы", "get_orders")
+	buttonSupport := tgbotapi.NewInlineKeyboardButtonURL("🆘 Связаться с нами", "https://yandex.ru")
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(buttonInfo),
+		tgbotapi.NewInlineKeyboardRow(buttonOrders),
+		tgbotapi.NewInlineKeyboardRow(buttonSupport),
 	)
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
@@ -100,11 +106,14 @@ func (h *BotHandler) HandleStart(message *tgbotapi.Message) {
 }
 
 func (h *BotHandler) HandleGetMain(callback *tgbotapi.CallbackQuery) {
-	text := "Главное меню\n\nДобро пожаловать! Здесь вы можете отслеживать статус ваших заказов"
-	buttonInfo := tgbotapi.NewInlineKeyboardButtonData("Показать информацию", "get_info")
+	text := "🏠 Главное меню\n\nЗдесь вы можете получить информацию о статусе выполнения ваших заказов, а также связаться с нами"
+
+	buttonOrders := tgbotapi.NewInlineKeyboardButtonData("📦 Мои заказы", "get_orders")
+	buttonSupport := tgbotapi.NewInlineKeyboardButtonURL("🆘 Связаться с нами", "https://yandex.ru")
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(buttonInfo),
+		tgbotapi.NewInlineKeyboardRow(buttonOrders),
+		tgbotapi.NewInlineKeyboardRow(buttonSupport),
 	)
 
 	editMsg := tgbotapi.NewEditMessageTextAndMarkup(
@@ -120,7 +129,7 @@ func (h *BotHandler) HandleGetMain(callback *tgbotapi.CallbackQuery) {
 	}
 }
 
-func (h *BotHandler) HandleGetInfo(callback *tgbotapi.CallbackQuery) {
+func (h *BotHandler) HandleGetOrders(callback *tgbotapi.CallbackQuery) {
 	chatID := strconv.Itoa(int(callback.Message.Chat.ID))
 	user, err := internal.GetUserByID(chatID)
 	if err != nil {
@@ -128,10 +137,101 @@ func (h *BotHandler) HandleGetInfo(callback *tgbotapi.CallbackQuery) {
 		return
 	}
 
-	text := fmt.Sprintf("Информация\n\nID: %s\nНомер телефона: %s\nАвтомобиль: %s", user.ID, user.PhoneNumber, user.Car)
-	buttonMain := tgbotapi.NewInlineKeyboardButtonData("В главное меню", "get_main")
+	text := "📦 Мои заказы\n\nВыберите заказ для просмотра информации 👇🏻"
+
+	// Создаем кнопки только для непустых заказов
+	var buttons [][]tgbotapi.InlineKeyboardButton
+
+	// Функция для формирования текста кнопки
+	getOrderButtonText := func(order models.Order, orderNumber string) string {
+		if order.OrderNumber != "" {
+			return fmt.Sprintf("🚗 Заказ №%s", order.OrderNumber)
+		}
+		return fmt.Sprintf("🚗 Заказ №%s", orderNumber)
+	}
+
+	if !internal.IsOrderEmpty(user.Order1) {
+		buttonText := getOrderButtonText(user.Order1, "1")
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardButtonData(buttonText, "order_1")})
+	}
+	if !internal.IsOrderEmpty(user.Order2) {
+		buttonText := getOrderButtonText(user.Order2, "2")
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardButtonData(buttonText, "order_2")})
+	}
+
+	// Если нет ни одного заказа, показываем сообщение
+	if len(buttons) == 0 {
+		text = "🏠 Главное меню\n\nУ вас пока нет активных заказов"
+		editMsg := tgbotapi.NewEditMessageText(
+			callback.Message.Chat.ID,
+			callback.Message.MessageID,
+			text,
+		)
+		if _, err := h.Bot.Send(editMsg); err != nil {
+			log.Printf("Ошибка отправки сообщения: %v", err)
+		}
+		return
+	}
+
+	buttonMain := tgbotapi.NewInlineKeyboardButtonData("🏠 В главное меню", "get_main")
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{buttonMain})
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons...)
+
+	editMsg := tgbotapi.NewEditMessageTextAndMarkup(
+		callback.Message.Chat.ID,
+		callback.Message.MessageID,
+		text,
+		keyboard,
+	)
+
+	if _, err := h.Bot.Send(editMsg); err != nil {
+		log.Printf("Ошибка отправки сообщения: %v", err)
+		return
+	}
+}
+
+func (h *BotHandler) HandleOrderInfo(callback *tgbotapi.CallbackQuery) {
+	chatID := strconv.Itoa(int(callback.Message.Chat.ID))
+	user, err := internal.GetUserByID(chatID)
+	if err != nil {
+		log.Printf("Ошибка поиска пользователя: %v", err)
+		return
+	}
+
+	var order models.Order
+	switch callback.Data {
+	case "order_1":
+		order = user.Order1
+	case "order_2":
+		order = user.Order2
+	default:
+		log.Printf("Неизвестный заказ: %s", callback.Data)
+		return
+	}
+
+	text := fmt.Sprintf(
+		"ℹ️ Информация о заказе №%s\n\n"+
+			"📅 Дата заказа:\n%s\n"+
+			"🚛 Ориентировочная дата прибытия:\n%s\n"+
+			"🚗 Марка и модель:\n%s\n"+
+			"🌍 Страна отправления:\n%s\n"+
+			"📍 Текущее местоположение:\n%s\n"+
+			"🏁 Пункт назначения:\n%s",
+		order.OrderNumber,
+		order.OrderDate,
+		order.EstimatedArrival,
+		order.CarModel,
+		order.CountryOfOrigin,
+		order.CurrentLocation,
+		order.Destination,
+	)
+
+	buttonOrders := tgbotapi.NewInlineKeyboardButtonData("◀️ Назад", "get_orders")
+	buttonMain := tgbotapi.NewInlineKeyboardButtonData("🏠 В главное меню", "get_main")
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(buttonOrders),
 		tgbotapi.NewInlineKeyboardRow(buttonMain),
 	)
 
@@ -195,5 +295,4 @@ func (h *BotHandler) HandlePhoneNumberInput(message *tgbotapi.Message) {
 		log.Printf("Ошибка отправки сообщения: %v", err)
 	}
 	h.UserStates[message.Chat.ID] = StateNone
-
 }

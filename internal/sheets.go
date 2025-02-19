@@ -10,40 +10,73 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
-// getUserByID - функция для получения данных пользователя по ID из Google Sheets
+func IsOrderEmpty(order models.Order) bool {
+	return order.OrderNumber == "" &&
+		order.OrderDate == "" &&
+		order.EstimatedArrival == "" &&
+		order.CarModel == "" &&
+		order.CountryOfOrigin == "" &&
+		order.CurrentLocation == "" &&
+		order.Destination == ""
+}
+
 func GetUserByID(userID string) (*models.User, error) {
-	// Создаем клиент для работы с Google Sheets API
 	ctx := context.Background()
 	srv, err := sheets.NewService(ctx, option.WithCredentialsFile("internal/credentials.json"))
 	if err != nil {
 		return nil, err
 	}
 
-	// ID таблицы и диапазон данных
 	const spreadsheetID = "1Y3Lj-7XhiP03ojyhmjVEukqK8mHr7bohuZMrMwUSYN8"
-	const rangeName = "Users!A:C" // Столбцы: A - ID, B - Номер телефона, C - Автомобиль
+	const rangeName = "Users!A:Q"
 
-	// Получаем данные из таблицы
 	resp, err := srv.Spreadsheets.Values.Get(spreadsheetID, rangeName).Do()
 	if err != nil {
 		return nil, err
 	}
 
-	// Перебираем все строки и ищем нужного пользователя
 	for _, row := range resp.Values {
-		if len(row) >= 3 && row[0] == userID {
-			// Заполняем структуру User
-			user := &models.User{
-				ID:          row[0].(string),
-				PhoneNumber: row[1].(string),
-				Car:         row[2].(string),
-			}
-			return user, nil
+		if len(row) < 1 || fmt.Sprintf("%v", row[0]) != userID {
+			continue
 		}
+
+		user := &models.User{
+			ID:          safeString(row, 0),
+			PhoneNumber: safeString(row, 1),
+			Order1: models.Order{
+				OrderNumber:      safeString(row, 2),
+				OrderDate:        safeString(row, 3),
+				EstimatedArrival: safeString(row, 4),
+				CarModel:         safeString(row, 5),
+				CountryOfOrigin:  safeString(row, 6),
+				CurrentLocation:  safeString(row, 7),
+				Destination:      safeString(row, 8),
+			},
+			Order2: models.Order{
+				OrderNumber:      safeString(row, 9),
+				OrderDate:        safeString(row, 10),
+				EstimatedArrival: safeString(row, 11),
+				CarModel:         safeString(row, 12),
+				CountryOfOrigin:  safeString(row, 13),
+				CurrentLocation:  safeString(row, 14),
+				Destination:      safeString(row, 15),
+			},
+		}
+		return user, nil
 	}
 
-	// Если пользователь не найден
 	return nil, fmt.Errorf("пользователь с ID %s не найден", userID)
+}
+
+// safeString - безопасное преобразование значения к строке, если оно существует.
+func safeString(row []interface{}, index int) string {
+	if index < len(row) {
+		if str, ok := row[index].(string); ok {
+			return str
+		}
+		return fmt.Sprintf("%v", row[index])
+	}
+	return ""
 }
 
 func RequestPhoneAndUpdateID(userID, phoneNumber string) error {
@@ -56,7 +89,7 @@ func RequestPhoneAndUpdateID(userID, phoneNumber string) error {
 
 	// ID таблицы и диапазон данных
 	const spreadsheetID = "1Y3Lj-7XhiP03ojyhmjVEukqK8mHr7bohuZMrMwUSYN8"
-	const rangeName = "Users!A:B" // Столбцы: A - ID, B - Номер телефона
+	const rangeName = "Users!A:B" // Столбцы: A - ID, B - Телефон
 
 	// Получаем данные из таблицы
 	resp, err := srv.Spreadsheets.Values.Get(spreadsheetID, rangeName).Do()
