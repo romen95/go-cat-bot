@@ -14,8 +14,9 @@ import (
 )
 
 type BotHandler struct {
-	Bot        *tgbotapi.BotAPI
-	UserStates map[int64]string
+	Bot           *tgbotapi.BotAPI
+	UserStates    map[int64]string
+	lastMessageID int
 }
 
 const (
@@ -68,18 +69,27 @@ func (h *BotHandler) HandleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 func (h *BotHandler) HandleStart(message *tgbotapi.Message) {
 	userID := strconv.Itoa(int(message.Chat.ID))
 
-	// Проверяем, есть ли пользователь в базе данных
 	_, err := internal.GetUserByID(userID)
 	if err != nil {
 		if strings.Contains(err.Error(), "пользователь с ID") {
-			// Если пользователь не найден, запрашиваем номер телефона
-			text := "👋🏻 Здравствуйте! Пожалуйста, введите ваш номер телефона в формате 79999999999"
+			// Создаём кнопку "Поделиться контактом"
+			text := "👋🏻 Здравствуйте! Пожалуйста, нажмите кнопку ниже, чтобы отправить ваш номер телефона."
+
+			buttonRequestContact := tgbotapi.NewKeyboardButtonContact("📲 Поделиться контактом")
+			keyboard := tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(buttonRequestContact),
+			)
+
 			msg := tgbotapi.NewMessage(message.Chat.ID, text)
-			if _, err := h.Bot.Send(msg); err != nil {
+			msg.ReplyMarkup = keyboard
+
+			msgSend, err := h.Bot.Send(msg)
+			if err != nil {
 				log.Printf("Ошибка отправки сообщения: %v", err)
 			}
+			h.lastMessageID = msgSend.MessageID
 
-			// Сохраняем состояние, чтобы ожидать номер телефона
+			// Устанавливаем состояние ожидания контакта
 			h.UserStates[message.Chat.ID] = StateWaitingForPhone
 			return
 		} else {
@@ -87,7 +97,6 @@ func (h *BotHandler) HandleStart(message *tgbotapi.Message) {
 			return
 		}
 	}
-
 	text := "🏠 Главное меню\n\nЗдесь вы можете получить информацию о статусе выполнения ваших заказов, а также связаться с нами"
 
 	buttonOrders := tgbotapi.NewInlineKeyboardButtonData("📦 Мои заказы", "get_orders")
@@ -249,50 +258,72 @@ func (h *BotHandler) HandleOrderInfo(callback *tgbotapi.CallbackQuery) {
 }
 
 func (h *BotHandler) HandlePhoneNumberInput(message *tgbotapi.Message) {
-	// Проверка формата номера телефона
-	phoneRegex := `^7\d{10}$`
-	matched, _ := regexp.MatchString(phoneRegex, message.Text)
-
-	if !matched {
-		// Номер не соответствует формату
-		msg := tgbotapi.NewMessage(message.Chat.ID, "⚠️ Неверный формат! Введите номер в формате: 79999999999")
-		if _, err := h.Bot.Send(msg); err != nil {
+	if message.Contact == nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "⚠️ Пожалуйста, используйте кнопку для отправки номера.")
+		deleteMsg := tgbotapi.NewDeleteMessage(message.Chat.ID, h.lastMessageID)
+		h.Bot.Send(deleteMsg)
+		msgSend, err := h.Bot.Send(msg)
+		if err != nil {
 			log.Printf("Ошибка отправки сообщения: %v", err)
 		}
+		h.lastMessageID = msgSend.MessageID
 		return
 	}
 
-	// Номер корректен — добавляем в базу
-	userID := strconv.Itoa(int(message.Chat.ID))
-	err := internal.RequestPhoneAndUpdateID(userID, message.Text)
-	if err != nil {
-		// Проверяем содержимое ошибки
-		if strings.Contains(err.Error(), "номер не найден") {
-			msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Вашего номера нет в базе. Обратитесь в поддержку.")
-			if _, sendErr := h.Bot.Send(msg); sendErr != nil {
-				log.Printf("Ошибка отправки сообщения: %v", sendErr)
-			}
-		} else {
-			log.Printf("Ошибка при обновлении телефона: %v", err)
-			msg := tgbotapi.NewMessage(message.Chat.ID, "🚨 Произошла ошибка. Попробуйте позже.")
-			if _, sendErr := h.Bot.Send(msg); sendErr != nil {
-				log.Printf("Ошибка отправки сообщения: %v", sendErr)
-			}
+	// Удаляем сообщение с контактом
+	deleteContactMsg := tgbotapi.NewDeleteMessage(message.Chat.ID, message.MessageID)
+	h.Bot.Send(deleteContactMsg)
+
+	phoneNumber := message.Contact.PhoneNumber
+	phoneNumber = strings.TrimPrefix(phoneNumber, "+")
+
+	phoneRegex := `^7\d{10}$`
+	matched, _ := regexp.MatchString(phoneRegex, phoneNumber)
+	if !matched {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "⚠️ Номер телефона должен быть в формате 79999999999.")
+		deleteMsg := tgbotapi.NewDeleteMessage(message.Chat.ID, h.lastMessageID)
+		h.Bot.Send(deleteMsg)
+		msgSend, err := h.Bot.Send(msg)
+		if err != nil {
+			log.Printf("Ошибка отправки сообщения: %v", err)
 		}
+		h.lastMessageID = msgSend.MessageID
 		return
 	}
 
-	text := "✅ Вы успешно вошли в систему!"
-	buttonMain := tgbotapi.NewInlineKeyboardButtonData("В главное меню", "get_main")
+	userID := strconv.Itoa(int(message.Chat.ID))
+	err := internal.RequestPhoneAndUpdateID(userID, phoneNumber)
+	if err != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Вашего номера нет в базе. Обратитесь в поддержку.")
+		deleteMsg := tgbotapi.NewDeleteMessage(message.Chat.ID, h.lastMessageID)
+		h.Bot.Send(deleteMsg)
+		msgSend, err := h.Bot.Send(msg)
+		if err != nil {
+			log.Printf("Ошибка отправки сообщения: %v", err)
+		}
+		h.lastMessageID = msgSend.MessageID
+		return
+	}
 
+	// Удаление клавиатуры и отправка сообщения с инлайн-кнопкой
+	buttonMain := tgbotapi.NewInlineKeyboardButtonData("🏠 В главное меню", "get_main")
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(buttonMain),
 	)
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, text)
-	msg.ReplyMarkup = keyboard
-	if _, err := h.Bot.Send(msg); err != nil {
+	// Сообщение "Вы успешно вошли в систему!" с инлайн-кнопкой
+	msg := tgbotapi.NewMessage(message.Chat.ID, "✅ Вы успешно вошли в систему!")
+	msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(false) // Убираем клавиатуру для ввода
+	msg.ReplyMarkup = keyboard                          // Добавляем инлайн-клавиатуру
+
+	deleteMsg := tgbotapi.NewDeleteMessage(message.Chat.ID, h.lastMessageID)
+	h.Bot.Send(deleteMsg)
+
+	msgSend, err := h.Bot.Send(msg)
+	if err != nil {
 		log.Printf("Ошибка отправки сообщения: %v", err)
 	}
+	h.lastMessageID = msgSend.MessageID
+
 	h.UserStates[message.Chat.ID] = StateNone
 }
